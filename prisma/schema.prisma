@@ -1,3 +1,5 @@
+// ========== PRISMA SCHEMA FOR DOCWAVE (PostgreSQL) ==========
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,10 +9,308 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+}
+
+enum DocRole {
+  OWNER
+  EDIT
+  COMMENT
+  VIEW
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
+  LAUGH
+  WOW
+  SAD
+  ANGRY
+}
+
+enum AuditAction {
+  WORKSPACE_CREATED
+  WORKSPACE_MEMBER_ADDED
+  DOC_CREATED
+  DOC_UPDATED
+  DOC_MOVED
+  DOC_DELETED
+  DOC_RESTORED
+  DOC_SHARED_LINK_CREATED
+  DOC_SHARED_LINK_REVOKED
+  COMMENT_ADDED
+  COMMENT_RESOLVED
+  PERMISSION_CHANGED
+  SNAPSHOT_SAVED
+}
+
+enum TargetType {
+  WORKSPACE
+  DOCUMENT
+  COMMENT
+  USER
+  FOLDER
+  SHARE_LINK
+}
+
 model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  name            String?
+  avatarUrl       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  ownedWorkspaces  Workspace[]           @relation("WorkspaceOwner")
+  workspaceMembers WorkspaceMember[]
+  documentsCreated Document[]            @relation("DocCreatedBy")
+  documentsUpdated Document[]            @relation("DocUpdatedBy")
+  docCollaborations DocumentCollaborator[]
+  comments        Comment[]
+  commentThreads  CommentThread[]        @relation("ThreadCreator")
+  sessions        CollaborationSession[]
+  operations      Operation[]
+  versions        DocumentVersion[]
+  audits          AuditLog[]             @relation("AuditActor")
+
+  // FIX: đối ứng cho Folder.createdBy
+  foldersCreated  Folder[]               @relation("FolderCreatedBy")
+
+  // FIX: đối ứng cho Reaction.user
+  reactions       Reaction[]
+}
+
+model Workspace {
   id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
+  name      String
+  slug      String   @unique
+  ownerId   String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  owner     User      @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members   WorkspaceMember[]
+  folders   Folder[]
+  documents Document[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  joinedAt    DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, userId])
+  @@index([userId])
+}
+
+model Folder {
+  id           String   @id @default(cuid())
+  name         String
+  workspaceId  String
+  parentId     String?
+  createdById  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent     Folder?   @relation("FolderToFolder", fields: [parentId], references: [id])
+  children   Folder[]  @relation("FolderToFolder")
+
+  // FIX: đặt tên quan hệ để bắt cặp với User.foldersCreated
+  createdBy  User      @relation("FolderCreatedBy", fields: [createdById], references: [id])
+
+  documents  Document[]
+
+  @@index([workspaceId])
+  @@index([parentId])
+}
+
+model Document {
+  id            String   @id @default(cuid())
+  title         String   @db.VarChar(256)
+  slug          String?
+  workspaceId   String
+  folderId      String?
+  createdById   String
+  updatedById   String?
+  isArchived    Boolean  @default(false)
+  publishedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folder        Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  createdBy     User      @relation("DocCreatedBy", fields: [createdById], references: [id])
+  updatedBy     User?     @relation("DocUpdatedBy", fields: [updatedById], references: [id])
+  content       DocumentContent?
+  versions      DocumentVersion[]
+  collaborators DocumentCollaborator[]
+  shareLinks    ShareLink[]
+  threads       CommentThread[]
+  sessions      CollaborationSession[]
+  operations    Operation[]
+
+  // NOTE: bỏ Document.audits để dùng AuditLog generic theo targetType/targetId
+
+  @@index([workspaceId])
+  @@index([folderId])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@unique([workspaceId, slug])
+}
+
+model DocumentContent {
+  docId     String   @id
+  snapshot  Json
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  document  Document @relation(fields: [docId], references: [id], onDelete: Cascade)
+}
+
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  docId       String
+  number      Int
+  snapshot    Json
+  message     String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  document  Document @relation(fields: [docId], references: [id], onDelete: Cascade)
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@unique([docId, number])
+  @@index([docId])
+}
+
+model DocumentCollaborator {
+  docId  String
+  userId String
+  role   DocRole @default(VIEW)
+
+  document Document @relation(fields: [docId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([docId, userId])
+  @@index([userId])
+}
+
+model ShareLink {
+  id        String  @id @default(cuid())
+  docId     String
+  token     String  @unique
+  role      DocRole @default(VIEW)
+  expiresAt DateTime?
+  isRevoked Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  document Document @relation(fields: [docId], references: [id], onDelete: Cascade)
+
+  @@index([docId])
+  @@index([expiresAt])
+}
+
+model CommentThread {
+  id          String   @id @default(cuid())
+  docId       String
+  createdById String
+  anchor      Json
+  isResolved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  resolvedAt  DateTime?
+
+  document  Document @relation(fields: [docId], references: [id], onDelete: Cascade)
+  createdBy User     @relation("ThreadCreator", fields: [createdById], references: [id])
+  comments  Comment[]
+
+  @@index([docId])
+  @@index([isResolved])
+}
+
+model Comment {
+  id          String   @id @default(cuid())
+  threadId    String
+  createdById String
+  body        String
+  createdAt   DateTime @default(now())
+  editedAt    DateTime?
+
+  thread    CommentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  createdBy User          @relation(fields: [createdById], references: [id])
+  reactions Reaction[]
+
+  @@index([threadId])
+}
+
+model Reaction {
+  id        String       @id @default(cuid())
+  commentId String
+  userId    String
+  type      ReactionType
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId, type])
+  @@index([userId])
+}
+
+model CollaborationSession {
+  id           String   @id @default(cuid())
+  docId        String
+  userId       String
+  clientId     String
+  connectedAt  DateTime @default(now())
+  lastPingAt   DateTime @default(now())
+  disconnectedAt DateTime?
+
+  document Document @relation(fields: [docId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@index([docId])
+  @@index([userId])
+  @@index([lastPingAt])
+}
+
+model Operation {
+  id        String   @id @default(cuid())
+  docId     String
+  userId    String?
+  seq       Int
+  op        Json
+  createdAt DateTime @default(now())
+
+  document Document @relation(fields: [docId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@unique([docId, seq])
+  @@index([docId])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  actorId    String?
+  action     AuditAction
+  targetType TargetType
+  targetId   String
+  data       Json?
+  createdAt  DateTime    @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([targetType, targetId])
+  @@index([createdAt])
 }

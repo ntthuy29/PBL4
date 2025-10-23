@@ -5,7 +5,6 @@
   "author": "",
   "private": true,
   "license": "UNLICENSED",
- 
   "scripts": {
     "format": "prettier --write \"src/**/*.{ts,tsx,js,json,md}\"",
     "lint": "eslint .",
@@ -14,20 +13,24 @@
     "build": "nest build",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "test": "jest",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test": "jest --config jest.config.ts",
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:watch": "jest --watch --config jest.config.ts",
+    "test:cov": "jest --coverage --config jest.config.ts"
   },
   "lint-staged": {
-    "src/**/*.{ts,tsx,js,json}": ["prettier --write"]
-  }
-,
-
+    "src/**/*.{ts,tsx,js,json}": [
+      "prettier --write"
+    ]
+  },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/platform-socket.io": "^11.1.7",
     "@nestjs/swagger": "^11.2.0",
+    "@nestjs/websockets": "^11.1.7",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "helmet": "^8.1.0",
