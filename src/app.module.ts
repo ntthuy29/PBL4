@@ -3,12 +3,11 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../prisma/prisma.module';
 import { UsersModule } from './users/users.module';
 import { CommonModule } from './common/common.module';
-import { ConfigModule } from './config/config.module';
+
 import { DatabaseModule } from './database/database.module';
 import { CacheModule } from './cache/cache.module';
 import { AuthModule } from './auth/auth.module';
 import { AclModule } from './acl/acl.module';
-import { DocumentModule } from './document/document.module';
 import { OplogModule } from './oplog/oplog.module';
 import { SnapshotModule } from './snapshot/snapshot.module';
 import { PresenceModule } from './presence/presence.module';
@@ -30,7 +29,6 @@ import { DocumentsService } from './documents/documents.service';
     CacheModule,
     AuthModule,
     AclModule,
-    DocumentModule,
     OplogModule,
     SnapshotModule,
     PresenceModule,
