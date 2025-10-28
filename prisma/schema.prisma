@@ -19,7 +19,7 @@ enum WorkspaceRole {
 enum DocRole {
   OWNER
   EDIT
-  COMMENT
+  COMMENT.
   VIEW
 }
 
@@ -56,11 +56,18 @@ enum TargetType {
   FOLDER
   SHARE_LINK
 }
+enum AuthProvider {
+  local
+  google
+}
 
 model User {
   id              String   @id @default(cuid())
   email           String   @unique
   name            String?
+  password        String?
+  provider        AuthProvider @default(local)
+  providerId      String?  @unique     
   avatarUrl       String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -83,6 +90,7 @@ model User {
 
   // FIX: đối ứng cho Reaction.user
   reactions       Reaction[]
+  @@unique([email, providerId])
 }
 
 model Workspace {
