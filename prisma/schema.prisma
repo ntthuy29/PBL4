@@ -19,7 +19,7 @@ enum WorkspaceRole {
 enum DocRole {
   OWNER
   EDIT
-  COMMENT.
+  COMMENT
   VIEW
 }
 
@@ -159,8 +159,8 @@ model Document {
 
   workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   folder        Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
-  createdBy     User      @relation("DocCreatedBy", fields: [createdById], references: [id])
-  updatedBy     User?     @relation("DocUpdatedBy", fields: [updatedById], references: [id])
+  createdBy     User      @relation("DocCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy     User?     @relation("DocUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   content       DocumentContent?
   versions      DocumentVersion[]
   collaborators DocumentCollaborator[]
