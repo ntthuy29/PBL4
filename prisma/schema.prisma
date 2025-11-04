@@ -181,6 +181,7 @@ model Document {
 model DocumentContent {
   docId     String   @id
   snapshot  Json
+  seqAtSnapshot Int? // Seq của operation cuối cùng có trong snapshot này
   version   Int      @default(1)
   updatedAt DateTime @updatedAt
 
@@ -295,15 +296,15 @@ model CollaborationSession {
 model Operation {
   id        String   @id @default(cuid())
   docId     String
-  userId    String?
-  seq       Int
+  userId    String?  // Ai tạo ra op này
+  seq       Int      @default(autoincrement())
   op        Json
   createdAt DateTime @default(now())
 
   document Document @relation(fields: [docId], references: [id], onDelete: Cascade)
   user     User?    @relation(fields: [userId], references: [id])
 
-  @@unique([docId, seq])
+  @@unique([docId, seq]) // Đảm bảo seq là duy nhất cho mỗi doc
   @@index([docId])
   @@index([createdAt])
 }

@@ -40,7 +40,7 @@ export class CollabGateway
 
     // Redis inbound: apply + broadcast
     this.redis.onUpdate(async (docId, update) => {
-      const state = await this.ydocs.getOrCreate(docId);
+      const state = await this.ydocs.get(docId);
       applyUpdate(state.doc, update, this);
       this.broadcastFromRedis(docId, update);
     });
@@ -57,11 +57,11 @@ export class CollabGateway
     this.presence.delete(docId as string, clientId as number);
     client.to(docId as string).emit('awareness', [{ clientId, payload: null }]);
 
-    const state = await this.ydocs.getOrCreate(docId as string);
+    const state = await this.ydocs.get(docId as string);
     state.clients.delete(client.id);
     if (state.clients.size === 0) {
       // Save before destroying
-      await this.ydocs.saveDoc(docId as string);
+      await this.ydocs.forceSnapshot(docId as string);
       this.ydocs.destroy(docId as string);
       this.presence.clearIfEmpty(docId as string);
     }
@@ -84,7 +84,7 @@ export class CollabGateway
     const clientId = this.ydocs.newClientId();
     client.data.clientId = clientId;
 
-    const state = await this.ydocs.getOrCreate(docId);
+    const state = await this.ydocs.get(docId); // state is RoomState
     state.clients.set(client.id, clientId);
 
     client.emit('awareness', this.presence.snapshot(docId));
@@ -104,13 +104,14 @@ export class CollabGateway
     if (!docId) return;
 
     const update = new Uint8Array(encoded);
-    const state = await this.ydocs.getOrCreate(docId as string);
+    const state = await this.ydocs.get(docId as string); // state is RoomState
 
     applyUpdate(state.doc, update, this);
 
+    // Oplog đã được ghi trong YDocManager, chỉ cần broadcast
     client.to(docId as string).emit('update', update);
 
-    await this.redis.publishDoc(docId as string, update);
+    this.redis.publishDoc(docId as string, update);
   }
 
   @SubscribeMessage('awareness')

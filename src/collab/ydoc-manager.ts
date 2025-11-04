@@ -1,16 +1,17 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import * as Y from 'yjs';
-import { DocumentsService } from '../documents/documents.service';
-import { PrismaService } from '../../prisma/prisma.service';
+import { OplogService } from './oplog.service';
+import { SnapshotService } from './snapshot.service';
 
 export interface RoomState {
   doc: Y.Doc;
   // socket.id -> awareness clientId
   clients: Map<string, number>;
-  saveTimeout?: NodeJS.Timeout;
+  lastSeq: number; // seq của op cuối cùng đã được apply
+  snapshotTimeout?: NodeJS.Timeout;
 }
 
-const SAVE_DEBOUNCE_TIME = 2000; // Lưu sau 2 giây không có thay đổi
+const SNAPSHOT_INTERVAL = 60000; // Tạo snapshot mỗi 60 giây nếu có thay đổi
 
 @Injectable()
 export class YDocManager implements OnModuleDestroy {
@@ -18,72 +19,81 @@ export class YDocManager implements OnModuleDestroy {
   private awarenessSeq = 1;
 
   constructor(
-    private readonly documentsService: DocumentsService,
-    private readonly prisma: PrismaService,
+    private readonly oplogService: OplogService,
+    private readonly snapshotService: SnapshotService,
   ) {}
 
-  async get(docId: string): Promise<Y.Doc> {
+  async get(docId: string): Promise<RoomState> {
     const room = this.rooms.get(docId);
     if (room) {
-      return room.doc;
+      return room;
     }
 
     // Nếu room chưa tồn tại, tạo mới
+    console.log(`[YDocManager] Creating new room for docId: ${docId}`);
     const doc = new Y.Doc();
-    const newRoom: RoomState = { doc, clients: new Map() };
+
+    // 1. Tải snapshot (nếu có)
+    const snapshot = await this.snapshotService.load(docId);
+    let seq = 0;
+    if (snapshot) {
+      Y.applyUpdate(doc, snapshot.data, this);
+      seq = snapshot.seq;
+      console.log(
+        `[YDocManager] Loaded snapshot for doc ${docId} at seq ${seq}`,
+      );
+    }
+
+    // 2. Replay oplog từ seq của snapshot
+    const ops = await this.oplogService.range(docId, seq);
+    for (const op of ops) {
+      Y.applyUpdate(doc, new Uint8Array(op.op as number[]), this);
+      seq = op.seq;
+    }
+    console.log(
+      `[YDocManager] Replayed ${ops.length} ops for doc ${docId}. Current seq: ${seq}`,
+    );
+
+    const newRoom: RoomState = { doc, clients: new Map(), lastSeq: seq };
     this.rooms.set(docId, newRoom);
 
     // Lắng nghe sự kiện update để lên lịch lưu trữ
-    doc.on('update', (update, origin) => {
-      this.scheduleSave(docId);
+    doc.on('update', async (update, origin) => {
+      if (origin !== this) {
+        const op = await this.oplogService.append(docId, Array.from(update));
+        newRoom.lastSeq = op.seq;
+        this.scheduleSnapshot(docId);
+      }
     });
 
-    // Tải snapshot từ database
-    const snapshot = await this.documentsService.getDocumentSnapshot(docId);
-    if (snapshot) {
-      Y.applyUpdate(doc, snapshot, this); // Thêm origin để tránh vòng lặp không cần thiết
-    }
-
-    return doc;
+    return newRoom;
   }
 
   newClientId(): number {
     return this.awarenessSeq++;
   }
 
-  scheduleSave(docId: string) {
+  scheduleSnapshot(docId: string) {
     const state = this.rooms.get(docId);
     if (!state) return;
 
-    if (state.saveTimeout) {
-      clearTimeout(state.saveTimeout);
+    if (state.snapshotTimeout) {
+      clearTimeout(state.snapshotTimeout);
     }
 
-    state.saveTimeout = setTimeout(async () => {
-      await this.saveDoc(docId);
-    }, SAVE_DEBOUNCE_TIME);
+    state.snapshotTimeout = setTimeout(() => {
+      this.forceSnapshot(docId);
+    }, SNAPSHOT_INTERVAL);
   }
 
-  async saveDoc(docId: string) {
+  async forceSnapshot(docId: string) {
     const state = this.rooms.get(docId);
     if (!state) return;
 
-    const snapshot = Y.encodeStateAsUpdate(state.doc);
-    const snapshotJson = JSON.stringify(Array.from(snapshot));
-
-    await this.prisma.documentContent.upsert({
-      where: { docId },
-      create: {
-        docId,
-        snapshot: snapshotJson,
-        version: 1, // Cần logic version phức tạp hơn nếu muốn
-      },
-      update: {
-        snapshot: snapshotJson,
-        version: { increment: 1 },
-      },
-    });
-    console.log(`[YDocManager] Saved document ${docId}`);
+    if (state.snapshotTimeout) {
+      clearTimeout(state.snapshotTimeout);
+    }
+    await this.snapshotService.save(docId, state.doc, state.lastSeq);
   }
 
   destroy(docId: string) {
@@ -102,9 +112,9 @@ export class YDocManager implements OnModuleDestroy {
   async onModuleDestroy() {
     // Lưu tất cả các document đang mở trước khi ứng dụng tắt
     console.log('[YDocManager] Saving all documents before shutdown...');
-    const savePromises = Array.from(this.rooms.keys()).map((docId) =>
-      this.saveDoc(docId),
+    const snapshotPromises = Array.from(this.rooms.keys()).map((docId) =>
+      this.forceSnapshot(docId),
     );
-    await Promise.all(savePromises);
+    await Promise.all(snapshotPromises);
   }
 }
