@@ -6,7 +6,7 @@ import { CommonModule } from './common/common.module';
 
 import { DatabaseModule } from './database/database.module';
 import { CacheModule } from './cache/cache.module';
-import { AuthModule } from './auth/auth.module';
+import { AuthModule } from './api/auth/callback/auth.module';
 import { AclModule } from './acl/acl.module';
 import { OplogModule } from './oplog/oplog.module';
 import { SnapshotModule } from './snapshot/snapshot.module';
