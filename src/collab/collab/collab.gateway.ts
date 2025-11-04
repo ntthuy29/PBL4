@@ -11,7 +11,10 @@ import { Socket, Server } from 'socket.io';
 import * as Y from 'yjs';
 import { applyUpdate, encodeStateAsUpdate } from 'yjs';
 import { YDocManager } from '../ydoc-manager';
-import { PresenceService, AwarenessPayload } from '../../presence/presence.service';
+import {
+  PresenceService,
+  AwarenessPayload,
+} from '../../presence/presence.service';
 import { RedisPubSub } from '../../cache/redis-pubsub.service';
 
 type JoinPayload = { docId: string };
@@ -36,9 +39,9 @@ export class CollabGateway
     this.io = server;
 
     // Redis inbound: apply + broadcast
-    this.redis.onUpdate((docId, update) => {
-      const state = this.ydocs.getOrCreate(docId);
-      applyUpdate(state.doc, update);
+    this.redis.onUpdate(async (docId, update) => {
+      const state = await this.ydocs.getOrCreate(docId);
+      applyUpdate(state.doc, update, this);
       this.broadcastFromRedis(docId, update);
     });
   }
@@ -47,17 +50,19 @@ export class CollabGateway
     // TODO: verify JWT nếu cần
   }
 
-  handleDisconnect(client: Socket): void {
+  async handleDisconnect(client: Socket): Promise<void> {
     const { docId, clientId } = client.data || {};
     if (!docId || !clientId) return;
 
     this.presence.delete(docId as string, clientId as number);
     client.to(docId as string).emit('awareness', [{ clientId, payload: null }]);
 
-    const state = this.ydocs.getOrCreate(docId as string);
+    const state = await this.ydocs.getOrCreate(docId as string);
     state.clients.delete(client.id);
     if (state.clients.size === 0) {
-      this.ydocs.destroyIfEmpty(docId as string);
+      // Save before destroying
+      await this.ydocs.saveDoc(docId as string);
+      this.ydocs.destroy(docId as string);
       this.presence.clearIfEmpty(docId as string);
     }
   }
@@ -79,7 +84,7 @@ export class CollabGateway
     const clientId = this.ydocs.newClientId();
     client.data.clientId = clientId;
 
-    const state = this.ydocs.getOrCreate(docId);
+    const state = await this.ydocs.getOrCreate(docId);
     state.clients.set(client.id, clientId);
 
     client.emit('awareness', this.presence.snapshot(docId));
@@ -99,9 +104,9 @@ export class CollabGateway
     if (!docId) return;
 
     const update = new Uint8Array(encoded);
-    const state = this.ydocs.getOrCreate(docId as string);
+    const state = await this.ydocs.getOrCreate(docId as string);
 
-    applyUpdate(state.doc, update);
+    applyUpdate(state.doc, update, this);
 
     client.to(docId as string).emit('update', update);
 
@@ -118,9 +123,9 @@ export class CollabGateway
 
     // narrow unknown -> AwarenessPayload an toàn
     const safe: AwarenessPayload =
-      (typeof payload === 'object' && payload !== null
+      typeof payload === 'object' && payload !== null
         ? (payload as AwarenessPayload)
-        : {}) as AwarenessPayload;
+        : {};
 
     this.presence.set(docId as string, clientId as number, safe);
     client.to(docId as string).emit('awareness', [{ clientId, payload: safe }]);
@@ -128,6 +133,6 @@ export class CollabGateway
 
   private broadcastFromRedis(docId: string, update: Uint8Array): void {
     if (!this.io) return;
-    this.io.to(docId).emit('update', update);
+    this.io.to(docId).except('redis').emit('update', update);
   }
 }
