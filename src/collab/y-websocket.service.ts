@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
-import { setupWSConnection } from 'y-websocket/bin/utils';
+import { setupWSConnection } from './y-websocket-utils';
 import { YDocManager } from './ydoc-manager';
 
 @Injectable()
@@ -16,15 +16,20 @@ export class YWebsocketService implements OnModuleInit {
 
     const wss = new WebSocketServer({ server });
 
-    wss.on('connection', (conn, req) => {
+    wss.on('connection', async (conn, req) => {
       // `setupWSConnection` là hàm cốt lõi từ `y-websocket`
       // Nó sẽ xử lý tất cả các message sync và awareness.
       // Chúng ta chỉ cần cung cấp cho nó cách để lấy Y.Doc.
-      setupWSConnection(conn, req, {
-        docName: req.url.slice(1).split('?')[0], // Lấy docId từ URL
-        gc: true,
-        doc: this.ydocManager, // ydocManager của chúng ta tương thích với interface này
-      });
+      try {
+        await setupWSConnection(conn, req, {
+          docName: req.url.slice(1).split('?')[0], // Lấy docId từ URL
+          gc: true,
+          manager: this.ydocManager,
+        });
+      } catch (error) {
+        console.error('[YWebsocketService] Failed to setup connection', error);
+        conn.close();
+      }
     });
 
     server.listen(3001);

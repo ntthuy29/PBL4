@@ -5,10 +5,17 @@ import { CacheModule } from '../cache/cache.module';
 import { OplogService } from './oplog.service';
 import { SnapshotService } from './snapshot.service';
 import { CollabGateway } from './collab/collab.gateway';
+import { YWebsocketService } from './y-websocket.service';
 
 @Module({
   imports: [PresenceModule, CacheModule], // Không cần import PrismaModule vì nó là Global
-  providers: [CollabGateway, YDocManager, OplogService, SnapshotService],
+  providers: [
+    CollabGateway,
+    YDocManager,
+    OplogService,
+    SnapshotService,
+    YWebsocketService,
+  ],
   exports: [YDocManager, OplogService], // Export để DocumentsController có thể dùng
 })
 export class CollabModule {}

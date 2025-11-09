@@ -53,6 +53,9 @@ importers:
       ioredis:
         specifier: ^5.8.2
         version: 5.8.2
+      lib0:
+        specifier: 0.2.114
+        version: 0.2.114
       passport:
         specifier: ^0.7.0
         version: 0.7.0
