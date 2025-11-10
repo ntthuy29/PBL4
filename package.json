@@ -39,6 +39,7 @@
     "class-validator": "^0.14.2",
     "helmet": "^8.1.0",
     "ioredis": "^5.8.2",
+    "lib0": "0.2.114",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
@@ -46,7 +47,9 @@
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.1",
     "swagger-ui-express": "^5.0.1",
+    "ws": "^8.18.3",
     "y-protocols": "^1.0.6",
+    "y-websocket": "^3.0.0",
     "yjs": "^13.6.27"
   },
   "devDependencies": {
