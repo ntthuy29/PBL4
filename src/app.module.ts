@@ -15,8 +15,7 @@ import { CollabModule } from './collab/collab.module';
 import { ExportModule } from './export/export.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { HealthModule } from './health/health.module';
-import { DocumentsController } from './documents/documents.controller';
-import { DocumentsService } from './documents/documents.service';
+import { DocumentsModule } from './documents/documents.module';
 
 @Module({
   imports: [
@@ -36,8 +35,7 @@ import { DocumentsService } from './documents/documents.service';
     ExportModule,
     NotificationsModule,
     HealthModule,
+    DocumentsModule,
   ],
-  controllers: [DocumentsController],
-  providers: [DocumentsService],
 })
 export class AppModule {}

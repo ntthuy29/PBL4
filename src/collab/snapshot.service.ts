@@ -19,18 +19,18 @@ export class SnapshotService {
    */
   async save(docId: string, ydoc: Y.Doc, seq: number): Promise<void> {
     const snapshot = Y.encodeStateAsUpdate(ydoc);
-    const snapshotJson = JSON.stringify(Array.from(snapshot));
+    const snapshotBase64 = Buffer.from(snapshot).toString('base64');
 
     await this.prisma.documentContent.upsert({
       where: { docId },
       create: {
         docId,
-        snapshot: snapshotJson,
+        snapshot: snapshotBase64,
         seqAtSnapshot: seq,
         version: 1,
       },
       update: {
-        snapshot: snapshotJson,
+        snapshot: snapshotBase64,
         seqAtSnapshot: seq,
         version: { increment: 1 },
       },
@@ -49,8 +49,24 @@ export class SnapshotService {
       where: { docId },
     });
     if (content?.snapshot && content.seqAtSnapshot != null) {
-      const snapshotArray = JSON.parse(content.snapshot as string);
-      return { data: Buffer.from(snapshotArray), seq: content.seqAtSnapshot };
+      const rawSnapshot = content.snapshot as unknown;
+      if (typeof rawSnapshot === 'string') {
+        if (rawSnapshot.trim().startsWith('[')) {
+          const bytes = JSON.parse(rawSnapshot) as number[];
+          return { data: Buffer.from(bytes), seq: content.seqAtSnapshot };
+        }
+        return {
+          data: Buffer.from(rawSnapshot, 'base64'),
+          seq: content.seqAtSnapshot,
+        };
+      }
+
+      if (Array.isArray(rawSnapshot)) {
+        return {
+          data: Buffer.from(rawSnapshot as number[]),
+          seq: content.seqAtSnapshot,
+        };
+      }
     }
     return null;
   }

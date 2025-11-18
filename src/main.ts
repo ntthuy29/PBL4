@@ -22,8 +22,16 @@ async function bootstrap() {
 
   // 3. HELMET
   app.use(helmet());
-
-  // 4. CÁC THỨ CÒN LẠI
+  const allowedOrigins = (
+    process.env.CLIENT_ORIGINS ?? 'http://localhost:4000,http://localhost:3000'
+  )
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  app.enableCors({
+    origin: allowedOrigins,
+    credentials: true,
+  });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
   // ... (Swagger config)
@@ -35,8 +43,8 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, document);
 
-  const port = process.env.PORT || 4000;
-  await app.listen(port);
+  const port = process.env.PORT ?? 3000;
+  await app.listen(port, '0.0.0.0');
   console.log(`🚀 Server is running on http://localhost:${port}`);
   console.log(`📘 Swagger docs at http://localhost:${port}/docs`);
 }
