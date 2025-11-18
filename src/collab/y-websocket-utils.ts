@@ -29,7 +29,7 @@ interface SetupWSConnectionOptions {
   gc?: boolean;
   manager: YDocManager;
   userId?: string;
-  canWrite?: boolean;
+  canWrite?: boolean | (() => Promise<boolean>);
 }
 
 const docEntries = new Map<string, DocEntry>();
@@ -207,21 +207,19 @@ const respondWithAwareness = (entry: DocEntry, conn: WS) => {
   }
 };
 
-const handleSyncMessage = (
+const handleSyncMessage = async (
   entry: DocEntry,
   conn: WS,
   decoder: decoding.Decoder,
-  canWrite: boolean,
+  canWrite: boolean | (() => Promise<boolean>),
 ) => {
   const currentPos = decoder.pos;
   const innerType = decoding.readVarUint(decoder);
   decoder.pos = currentPos;
-  if (
-    innerType === syncProtocol.messageYjsUpdate &&
-    !canWrite
-  ) {
-    // Skip applying updates if user cannot write
-    return;
+  const allowed =
+    typeof canWrite === 'function' ? await canWrite() : !!canWrite;
+  if (innerType === syncProtocol.messageYjsUpdate && !allowed) {
+    return; // Skip applying updates if user cannot write
   }
 
   const encoder = encoding.createEncoder();
@@ -248,13 +246,13 @@ const handleAuthMessage = (
 const registerMessageListener = (
   entry: DocEntry,
   conn: WS,
-  canWrite: boolean,
-) => (data: RawData) => {
+  canWrite: boolean | (() => Promise<boolean>),
+) => async (data: RawData) => {
   const decoder = decoding.createDecoder(toUint8Array(data));
   const messageType = decoding.readVarUint(decoder);
   switch (messageType) {
     case messageSync:
-      handleSyncMessage(entry, conn, decoder, canWrite);
+      await handleSyncMessage(entry, conn, decoder, canWrite);
       break;
     case messageAwareness:
       handleAwarenessMessage(entry, conn, decoding.readVarUint8Array(decoder));

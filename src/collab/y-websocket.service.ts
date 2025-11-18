@@ -48,7 +48,7 @@ export class YWebsocketService implements OnModuleInit {
 
         const docId = req.url.slice(1).split('?')[0];
         const canRead = await this.aclService.canRead(docId, userId);
-        const canWrite = await this.aclService.canWrite(docId, userId);
+        const canWrite = () => this.aclService.canWrite(docId, userId);
         if (!canRead) {
           conn.close(4403, 'forbidden');
           return;
