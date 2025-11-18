@@ -4,17 +4,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 
-const DEMO_USER_EMAIL = 'demo@docwave.local';
-const DEMO_WORKSPACE_SLUG = 'demo-workspace';
-
 @Injectable()
 export class DocumentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateDocumentDto) {
+  async create(dto: CreateDocumentDto, userId: string) {
     const documentId = await this.prisma.$transaction(async (tx) => {
-      const owner = await this.ensureDemoUser(tx);
-      const workspace = await this.ensureDemoWorkspace(tx, owner.id);
+      const owner = await this.ensureUserExists(tx, userId);
+      const workspace = await this.ensureUserWorkspace(tx, owner.id);
 
       const document = await tx.document.create({
         data: {
@@ -32,20 +29,21 @@ export class DocumentsService {
       return document.id;
     });
 
-    return this.findOne(documentId);
+    return this.findOne(documentId, userId);
   }
 
-  async findAll() {
+  async findAll(userId: string) {
     const documents = await this.prisma.document.findMany({
+      where: { createdById: userId },
       orderBy: { updatedAt: 'desc' },
       include: { content: true, createdBy: true },
     });
     return documents.map((doc) => this.toResponse(doc));
   }
 
-  async findOne(id: string) {
-    const document = await this.prisma.document.findUnique({
-      where: { id },
+  async findOne(id: string, userId: string) {
+    const document = await this.prisma.document.findFirst({
+      where: { id, createdById: userId },
       include: { content: true, createdBy: true },
     });
     if (!document) {
@@ -54,9 +52,15 @@ export class DocumentsService {
     return this.toResponse(document);
   }
 
-  async update(id: string, dto: UpdateDocumentDto) {
+  async update(id: string, dto: UpdateDocumentDto, userId: string) {
     await this.prisma.$transaction(async (tx) => {
-      const owner = await this.ensureDemoUser(tx);
+      const owner = await this.ensureUserExists(tx, userId);
+      const existing = await tx.document.findFirst({
+        where: { id, createdById: userId },
+      });
+      if (!existing) {
+        throw new NotFoundException(`Document ${id} not found`);
+      }
 
       const data: Prisma.DocumentUncheckedUpdateInput = {
         updatedAt: new Date(),
@@ -74,15 +78,23 @@ export class DocumentsService {
       await this.saveContentIfProvided(tx, id, dto.content);
     });
 
-    return this.findOne(id);
+    return this.findOne(id, userId);
   }
 
-  async remove(id: string) {
-    const document = await this.prisma.document.delete({
-      where: { id },
+  async remove(id: string, userId: string) {
+    const document = await this.prisma.document.findFirst({
+      where: { id, createdById: userId },
       include: { content: true, createdBy: true },
     });
-    return this.toResponse(document);
+    if (!document) {
+      throw new NotFoundException(`Document ${id} not found`);
+    }
+
+    const deleted = await this.prisma.document.delete({
+      where: { id: document.id },
+      include: { content: true, createdBy: true },
+    });
+    return this.toResponse(deleted);
   }
 
   async getDocumentSnapshot(docId: string): Promise<Buffer | null> {
@@ -125,35 +137,32 @@ export class DocumentsService {
     };
   }
 
-  private async ensureDemoUser(tx: Prisma.TransactionClient) {
-    const existing = await tx.user.findUnique({
-      where: { email: DEMO_USER_EMAIL },
+  private async ensureUserExists(tx: Prisma.TransactionClient, userId: string) {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
     });
-    if (existing) return existing;
-
-    return tx.user.create({
-      data: {
-        email: DEMO_USER_EMAIL,
-        name: 'Demo User',
-        password: null,
-        avatarUrl: null,
-      },
-    });
+    if (!user) {
+      throw new NotFoundException(`User ${userId} not found`);
+    }
+    return user;
   }
 
-  private async ensureDemoWorkspace(
+  private async ensureUserWorkspace(
     tx: Prisma.TransactionClient,
     ownerId: string,
   ) {
-    const existing = await tx.workspace.findUnique({
-      where: { slug: DEMO_WORKSPACE_SLUG },
+    const existing = await tx.workspace.findFirst({
+      where: { ownerId },
     });
     if (existing) return existing;
 
+    const owner = await this.ensureUserExists(tx, ownerId);
+    const slug = `ws-${ownerId}`;
+
     return tx.workspace.create({
       data: {
-        name: 'Demo Workspace',
-        slug: DEMO_WORKSPACE_SLUG,
+        name: owner.name ? `${owner.name}'s Workspace` : 'My Workspace',
+        slug,
         ownerId,
       },
     });
