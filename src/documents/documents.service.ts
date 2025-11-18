@@ -41,9 +41,13 @@ export class DocumentsService {
     return documents.map((doc) => this.toResponse(doc));
   }
 
-  async findOne(id: string, userId: string) {
+  /**
+   * Allow fetching a document by id even if it was created by another user.
+   * This is needed so collaborators opening a shared link can still load the document.
+   */
+  async findOne(id: string, _userId: string) {
     const document = await this.prisma.document.findFirst({
-      where: { id, createdById: userId },
+      where: { id },
       include: { content: true, createdBy: true },
     });
     if (!document) {
@@ -52,11 +56,15 @@ export class DocumentsService {
     return this.toResponse(document);
   }
 
+  /**
+   * Allow updates from collaborators (ownership check removed) so multiple users can
+   * edit the same document when they have the link.
+   */
   async update(id: string, dto: UpdateDocumentDto, userId: string) {
     await this.prisma.$transaction(async (tx) => {
       const owner = await this.ensureUserExists(tx, userId);
       const existing = await tx.document.findFirst({
-        where: { id, createdById: userId },
+        where: { id },
       });
       if (!existing) {
         throw new NotFoundException(`Document ${id} not found`);
