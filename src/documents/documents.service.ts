@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { DocRole, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
@@ -34,32 +34,49 @@ export class DocumentsService {
 
   async findAll(userId: string) {
     const documents = await this.prisma.document.findMany({
-      where: { createdById: userId },
+      where: {
+        OR: [
+          { createdById: userId },
+          { collaborators: { some: { userId } } },
+        ],
+      },
       orderBy: { updatedAt: 'desc' },
-      include: { content: true, createdBy: true },
+      include: {
+        content: true,
+        createdBy: true,
+        collaborators: {
+          include: {
+            user: true,
+          },
+        },
+      },
     });
-    return documents.map((doc) => this.toResponse(doc));
+    return documents.map((doc) => this.toResponse(doc, userId));
   }
 
-  /**
-   * Allow fetching a document by id even if it was created by another user.
-   * This is needed so collaborators opening a shared link can still load the document.
-   */
-  async findOne(id: string, _userId: string) {
+  async findOne(id: string, userId: string) {
     const document = await this.prisma.document.findFirst({
-      where: { id },
-      include: { content: true, createdBy: true },
+      where: {
+        id,
+        OR: [
+          { createdById: userId },
+          { collaborators: { some: { userId } } },
+        ],
+      },
+      include: {
+        content: true,
+        createdBy: true,
+        collaborators: {
+          include: { user: true },
+        },
+      },
     });
     if (!document) {
       throw new NotFoundException(`Document ${id} not found`);
     }
-    return this.toResponse(document);
+    return this.toResponse(document, userId);
   }
 
-  /**
-   * Allow updates from collaborators (ownership check removed) so multiple users can
-   * edit the same document when they have the link.
-   */
   async update(id: string, dto: UpdateDocumentDto, userId: string) {
     await this.prisma.$transaction(async (tx) => {
       const owner = await this.ensureUserExists(tx, userId);
@@ -92,7 +109,11 @@ export class DocumentsService {
   async remove(id: string, userId: string) {
     const document = await this.prisma.document.findFirst({
       where: { id, createdById: userId },
-      include: { content: true, createdBy: true },
+      include: {
+        content: true,
+        createdBy: true,
+        collaborators: { include: { user: true } },
+      },
     });
     if (!document) {
       throw new NotFoundException(`Document ${id} not found`);
@@ -100,7 +121,11 @@ export class DocumentsService {
 
     const deleted = await this.prisma.document.delete({
       where: { id: document.id },
-      include: { content: true, createdBy: true },
+      include: {
+        content: true,
+        createdBy: true,
+        collaborators: { include: { user: true } },
+      },
     });
     return this.toResponse(deleted);
   }
@@ -124,14 +149,51 @@ export class DocumentsService {
     return Buffer.from(JSON.stringify(snapshotValue));
   }
 
+  private mapRole(role: DocRole): 'owner' | 'editor' | 'commenter' | 'viewer' {
+    switch (role) {
+      case DocRole.OWNER:
+        return 'owner';
+      case DocRole.EDIT:
+        return 'editor';
+      case DocRole.COMMENT:
+        return 'commenter';
+      case DocRole.VIEW:
+      default:
+        return 'viewer';
+    }
+  }
+
   private toResponse(
     document: Prisma.DocumentGetPayload<{
-      include: { content: true; createdBy: true };
+      include: {
+        content: true;
+        createdBy: true;
+        collaborators: { include: { user: true } };
+      };
     }>,
+    currentUserId?: string,
   ) {
-    const { content, createdBy, ...rest } = document;
+    const { content, createdBy, collaborators = [], ...rest } = document;
+    const permissions = [
+      { userId: document.createdById, role: 'owner' as const },
+      ...collaborators.map((c) => ({
+        userId: c.userId,
+        role: this.mapRole(c.role),
+        email: c.user?.email ?? null,
+        name: c.user?.name ?? null,
+        avatar: c.user?.avatarUrl ?? null,
+      })),
+    ];
+    const currentUserRole =
+      currentUserId === document.createdById
+        ? ('owner' as const)
+        : permissions.find((p) => p.userId === currentUserId)?.role ??
+          ('viewer' as const);
+
     return {
       ...rest,
+      currentUserRole,
+      permissions,
       content: content?.snapshot ?? null,
       seqAtSnapshot: content?.seqAtSnapshot ?? null,
       version: content?.version ?? null,

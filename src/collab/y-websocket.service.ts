@@ -3,10 +3,16 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { setupWSConnection } from './y-websocket-utils';
 import { YDocManager } from './ydoc-manager';
+import { JwtService } from '@nestjs/jwt';
+import { AclService } from '../acl/acl.service';
 
 @Injectable()
 export class YWebsocketService implements OnModuleInit {
-  constructor(private readonly ydocManager: YDocManager) {}
+  constructor(
+    private readonly ydocManager: YDocManager,
+    private readonly jwtService: JwtService,
+    private readonly aclService: AclService,
+  ) {}
 
   onModuleInit() {
     const server = createServer((request, response) => {
@@ -19,12 +25,41 @@ export class YWebsocketService implements OnModuleInit {
     wss.on('connection', async (conn, req) => {
       // `setupWSConnection` là hàm cốt lõi từ `y-websocket`
       // Nó sẽ xử lý tất cả các message sync và awareness.
-      // Chúng ta chỉ cần cung cấp cho nó cách để lấy Y.Doc.
+      // Chúng ta chỉ cần cung cấp cho nó cách để lấy Y.Doc và quyền.
       try {
+        const url = new URL(req.url, 'http://localhost');
+        const token = url.searchParams.get('token') || req.headers['authorization']?.toString()?.replace('Bearer ', '');
+        let userId: string | null = null;
+        if (token) {
+          try {
+            const payload = this.jwtService.verify(token, {
+              secret: process.env.JWT_ACCESS_SECRET,
+            });
+            userId = payload?.sub ?? null;
+          } catch {
+            // invalid token
+          }
+        }
+
+        if (!userId) {
+          conn.close(4401, 'unauthorized');
+          return;
+        }
+
+        const docId = req.url.slice(1).split('?')[0];
+        const canRead = await this.aclService.canRead(docId, userId);
+        const canWrite = await this.aclService.canWrite(docId, userId);
+        if (!canRead) {
+          conn.close(4403, 'forbidden');
+          return;
+        }
+
         await setupWSConnection(conn, req, {
-          docName: req.url.slice(1).split('?')[0], // Lấy docId từ URL
+          docName: docId, // Lấy docId từ URL
           gc: true,
           manager: this.ydocManager,
+          userId,
+          canWrite,
         });
       } catch (error) {
         console.error('[YWebsocketService] Failed to setup connection', error);

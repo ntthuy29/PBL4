@@ -6,9 +6,16 @@ import { OplogService } from './oplog.service';
 import { SnapshotService } from './snapshot.service';
 import { CollabGateway } from './collab/collab.gateway';
 import { YWebsocketService } from './y-websocket.service';
+import { AclModule } from '../acl/acl.module';
+import { JwtModule } from '@nestjs/jwt';
 
 @Module({
-  imports: [PresenceModule, CacheModule], // Không cần import PrismaModule vì nó là Global
+  imports: [
+    PresenceModule,
+    CacheModule,
+    AclModule,
+    JwtModule.register({ secret: process.env.JWT_ACCESS_SECRET }),
+  ], // Không cần import PrismaModule vì nó là Global
   providers: [
     CollabGateway,
     YDocManager,
