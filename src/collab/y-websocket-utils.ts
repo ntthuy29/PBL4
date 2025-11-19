@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'http';
-import type { RawData, WebSocket } from 'ws';
+import type { RawData } from 'ws';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import * as syncProtocol from 'y-protocols/sync';
@@ -7,6 +7,8 @@ import * as awarenessProtocol from 'y-protocols/awareness';
 import * as authProtocol from 'y-protocols/auth';
 import { WebSocket as WsImpl } from 'ws';
 import { YDocManager } from './ydoc-manager';
+
+type WS = InstanceType<typeof WsImpl>;
 
 const messageSync = 0;
 const messageAwareness = 1;
@@ -16,7 +18,7 @@ const pingIntervalMs = 30_000;
 
 interface DocEntry {
   id: string;
-  connections: Set<WebSocket>;
+  connections: Set<WS>;
   awareness: awarenessProtocol.Awareness;
   updateListener: (update: Uint8Array, origin: unknown) => void;
   destroy: () => void;
@@ -26,11 +28,13 @@ interface SetupWSConnectionOptions {
   docName?: string;
   gc?: boolean;
   manager: YDocManager;
+  userId?: string;
+  canWrite?: boolean | (() => Promise<boolean>);
 }
 
 const docEntries = new Map<string, DocEntry>();
 const pendingEntries = new Map<string, Promise<DocEntry>>();
-const awarenessStatesByConnection = new Map<WebSocket, Set<number>>();
+const awarenessStatesByConnection = new Map<WS, Set<number>>();
 
 const parseDocName = (req?: IncomingMessage, explicit?: string): string => {
   if (explicit) return explicit;
@@ -52,7 +56,7 @@ const toUint8Array = (data: RawData): Uint8Array => {
   return new Uint8Array(Buffer.from(data));
 };
 
-const sendEncoded = (conn: WebSocket, encoder: encoding.Encoder) => {
+const sendEncoded = (conn: WS, encoder: encoding.Encoder) => {
   if (conn.readyState !== WsImpl.OPEN) return;
   const message = encoding.toUint8Array(encoder);
   if (message.length === 0) return;
@@ -65,7 +69,7 @@ const sendEncoded = (conn: WebSocket, encoder: encoding.Encoder) => {
 
 const broadcast = (
   entry: DocEntry,
-  origin: WebSocket | null,
+  origin: WS | null,
   payload: Uint8Array,
 ) => {
   entry.connections.forEach((client) => {
@@ -117,7 +121,7 @@ const ensureDocEntry = async (
   const creation = (async () => {
     const room = await manager.get(docName);
     const awareness = new awarenessProtocol.Awareness(room.doc);
-    const connections = new Set<WebSocket>();
+    const connections = new Set<WS>();
 
     const updateListener = (update: Uint8Array, origin: unknown) => {
       const encoder = encoding.createEncoder();
@@ -126,7 +130,7 @@ const ensureDocEntry = async (
       const payload = encoding.toUint8Array(encoder);
       const originConn =
         origin && typeof origin === 'object' && origin instanceof WsImpl
-          ? (origin as WebSocket)
+          ? (origin as WS)
           : null;
       broadcast(entry, originConn, payload);
     };
@@ -154,7 +158,7 @@ const ensureDocEntry = async (
   return creation;
 };
 
-const cleanupConnection = (conn: WebSocket, entry: DocEntry) => {
+const cleanupConnection = (conn: WS, entry: DocEntry) => {
   entry.connections.delete(conn);
   const controlled = awarenessStatesByConnection.get(conn);
   if (controlled && controlled.size > 0) {
@@ -173,7 +177,7 @@ const cleanupConnection = (conn: WebSocket, entry: DocEntry) => {
 
 const handleAwarenessMessage = (
   entry: DocEntry,
-  conn: WebSocket,
+  conn: WS,
   update: Uint8Array,
 ) => {
   const clients = readClientsFromAwarenessUpdate(update);
@@ -196,18 +200,28 @@ const handleAwarenessMessage = (
   broadcast(entry, conn, payload);
 };
 
-const respondWithAwareness = (entry: DocEntry, conn: WebSocket) => {
+const respondWithAwareness = (entry: DocEntry, conn: WS) => {
   const payload = encodeAwarenessSnapshot(entry.awareness);
   if (conn.readyState === WsImpl.OPEN) {
     conn.send(payload, { binary: true });
   }
 };
 
-const handleSyncMessage = (
+const handleSyncMessage = async (
   entry: DocEntry,
-  conn: WebSocket,
+  conn: WS,
   decoder: decoding.Decoder,
+  canWrite: boolean | (() => Promise<boolean>),
 ) => {
+  const currentPos = decoder.pos;
+  const innerType = decoding.readVarUint(decoder);
+  decoder.pos = currentPos;
+  const allowed =
+    typeof canWrite === 'function' ? await canWrite() : !!canWrite;
+  if (innerType === syncProtocol.messageYjsUpdate && !allowed) {
+    return; // Skip applying updates if user cannot write
+  }
+
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, messageSync);
   syncProtocol.readSyncMessage(decoder, encoder, entry.awareness.doc, conn);
@@ -218,7 +232,7 @@ const handleSyncMessage = (
 
 const handleAuthMessage = (
   entry: DocEntry,
-  conn: WebSocket,
+  conn: WS,
   decoder: decoding.Decoder,
 ) => {
   authProtocol.readAuthMessage(decoder, entry.awareness.doc, (_ydoc, reason) => {
@@ -231,13 +245,14 @@ const handleAuthMessage = (
 
 const registerMessageListener = (
   entry: DocEntry,
-  conn: WebSocket,
-) => (data: RawData) => {
+  conn: WS,
+  canWrite: boolean | (() => Promise<boolean>),
+) => async (data: RawData) => {
   const decoder = decoding.createDecoder(toUint8Array(data));
   const messageType = decoding.readVarUint(decoder);
   switch (messageType) {
     case messageSync:
-      handleSyncMessage(entry, conn, decoder);
+      await handleSyncMessage(entry, conn, decoder, canWrite);
       break;
     case messageAwareness:
       handleAwarenessMessage(entry, conn, decoding.readVarUint8Array(decoder));
@@ -255,7 +270,7 @@ const registerMessageListener = (
 };
 
 export const setupWSConnection = async (
-  conn: WebSocket,
+  conn: WS,
   req: IncomingMessage,
   opts: SetupWSConnectionOptions,
 ): Promise<void> => {
@@ -283,7 +298,7 @@ export const setupWSConnection = async (
     cleanupConnection(conn, entry);
   });
 
-  conn.on('message', registerMessageListener(entry, conn));
+  conn.on('message', registerMessageListener(entry, conn, opts.canWrite ?? false));
 
   if (conn.readyState === WsImpl.OPEN) {
     const encoder = encoding.createEncoder();

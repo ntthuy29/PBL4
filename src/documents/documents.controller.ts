@@ -18,10 +18,12 @@ import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth/jwt-auth.guard';
 import { Request } from 'express';
+import { DocPermission } from '../acl/doc-permission.decorator';
+import { DocPermissionGuard } from '../acl/doc-permission.guard';
 
 type AuthRequest = Request & { user?: { sub?: string } };
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, DocPermissionGuard)
 @Controller('documents')
 export class DocumentsController {
   constructor(
@@ -40,11 +42,13 @@ export class DocumentsController {
     return this.documentsService.findAll(this.getUserId(req));
   }
 
+  @DocPermission('read')
   @Get(':id')
   findOne(@Req() req: AuthRequest, @Param('id') id: string) {
     return this.documentsService.findOne(id, this.getUserId(req));
   }
 
+  @DocPermission('write')
   @Patch(':id')
   update(
     @Req() req: AuthRequest,
@@ -54,11 +58,13 @@ export class DocumentsController {
     return this.documentsService.update(id, dto, this.getUserId(req));
   }
 
+  @DocPermission('admin')
   @Delete(':id')
   remove(@Req() req: AuthRequest, @Param('id') id: string) {
     return this.documentsService.remove(id, this.getUserId(req));
   }
 
+  @DocPermission('admin')
   @Post(':id/snapshot')
   async forceSnapshot(@Req() req: AuthRequest, @Param('id') id: string) {
     await this.documentsService.findOne(id, this.getUserId(req));
@@ -66,6 +72,7 @@ export class DocumentsController {
     return { message: `Snapshot for document ${id} is being created.` };
   }
 
+  @DocPermission('read')
   @Get(':id/oplog')
   async getOplog(
     @Req() req: AuthRequest,

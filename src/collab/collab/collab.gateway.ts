@@ -16,6 +16,7 @@ import {
   AwarenessPayload,
 } from '../../presence/presence.service';
 import { RedisPubSub } from '../../cache/redis-pubsub.service';
+import { AclService } from '../../acl/acl.service';
 
 type JoinPayload = { docId: string };
 
@@ -32,6 +33,7 @@ export class CollabGateway
     private readonly ydocs: YDocManager,
     private readonly presence: PresenceService,
     private readonly redis: RedisPubSub,
+    private readonly acl: AclService,
   ) {}
 
   // Lấy server instance hợp lệ (tránh dùng client.server)
@@ -75,8 +77,14 @@ export class CollabGateway
     const { docId } = body || ({} as JoinPayload);
     if (!docId) return { ok: false, error: 'docId required' };
 
+    const userId = client.data?.userId ?? client.handshake.auth?.userId;
+    if (!userId) return { ok: false, error: 'unauthenticated' };
+    const canRead = await this.acl.canRead(docId, userId as string);
+    if (!canRead) return { ok: false, error: 'forbidden' };
+
     client.join(docId);
     client.data.docId = docId;
+    client.data.userId = userId;
 
     // Phase 2: subscribe redis channel 1 lần/process
     await this.redis.subscribeDoc(docId);
@@ -105,6 +113,11 @@ export class CollabGateway
 
     const update = new Uint8Array(encoded);
     const state = await this.ydocs.get(docId as string); // state is RoomState
+
+    const userId = client.data?.userId as string | undefined;
+    if (!userId) return;
+    const canWrite = await this.acl.canWrite(docId as string, userId);
+    if (!canWrite) return;
 
     applyUpdate(state.doc, update, this);
 
