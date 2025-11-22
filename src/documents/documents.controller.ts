@@ -42,6 +42,26 @@ export class DocumentsController {
     return this.documentsService.findAll(this.getUserId(req));
   }
 
+  @Get('my')
+  findMyDocuments(@Req() req: AuthRequest) {
+    return this.documentsService.findMyDocuments(this.getUserId(req));
+  }
+
+  @Get('shared')
+  findSharedDocuments(@Req() req: AuthRequest) {
+    return this.documentsService.findSharedDocuments(this.getUserId(req));
+  }
+
+  @Get('recent')
+  findRecentDocuments(@Req() req: AuthRequest) {
+    return this.documentsService.findRecentDocuments(this.getUserId(req));
+  }
+
+  @Get('starred')
+  findStarredDocuments(@Req() req: AuthRequest) {
+    return this.documentsService.findStarredDocuments(this.getUserId(req));
+  }
+
   @DocPermission('read')
   @Get(':id')
   findOne(@Req() req: AuthRequest, @Param('id') id: string) {

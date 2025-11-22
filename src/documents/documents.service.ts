@@ -35,10 +35,8 @@ export class DocumentsService {
   async findAll(userId: string) {
     const documents = await this.prisma.document.findMany({
       where: {
-        OR: [
-          { createdById: userId },
-          { collaborators: { some: { userId } } },
-        ],
+        OR: [{ createdById: userId }, { collaborators: { some: { userId } } }],
+        isArchived: false,
       },
       orderBy: { updatedAt: 'desc' },
       include: {
@@ -54,14 +52,80 @@ export class DocumentsService {
     return documents.map((doc) => this.toResponse(doc, userId));
   }
 
+  async findMyDocuments(userId: string) {
+    const documents = await this.prisma.document.findMany({
+      where: {
+        createdById: userId,
+        isArchived: false,
+      },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        content: true,
+        createdBy: true,
+        collaborators: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+    return documents.map((doc) => this.toResponse(doc, userId));
+  }
+
+  async findSharedDocuments(userId: string) {
+    const documents = await this.prisma.document.findMany({
+      where: {
+        collaborators: { some: { userId } },
+        createdById: { not: userId },
+        isArchived: false,
+      },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        content: true,
+        createdBy: true,
+        collaborators: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+    return documents.map((doc) => this.toResponse(doc, userId));
+  }
+
+  async findRecentDocuments(userId: string) {
+    const documents = await this.prisma.document.findMany({
+      where: {
+        OR: [{ createdById: userId }, { collaborators: { some: { userId } } }],
+        isArchived: false,
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 10, // Chỉ lấy 10 documents gần đây nhất
+      include: {
+        content: true,
+        createdBy: true,
+        collaborators: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+    return documents.map((doc) => this.toResponse(doc, userId));
+  }
+
+  async findStarredDocuments(userId: string) {
+    // Tạm thời trả về empty array vì chưa có bảng starred
+    // Trong tương lai sẽ implement bảng user_document_stars
+    await Promise.resolve(); // Để tránh lỗi no await
+    return [];
+  }
+
   async findOne(id: string, userId: string) {
     const document = await this.prisma.document.findFirst({
       where: {
         id,
-        OR: [
-          { createdById: userId },
-          { collaborators: { some: { userId } } },
-        ],
+        OR: [{ createdById: userId }, { collaborators: { some: { userId } } }],
       },
       include: {
         content: true,
@@ -140,7 +204,7 @@ export class DocumentsService {
 
     const snapshotValue =
       typeof content.snapshot === 'string'
-        ? JSON.parse(content.snapshot)
+        ? (JSON.parse(content.snapshot) as unknown)
         : content.snapshot;
 
     if (Array.isArray(snapshotValue)) {
@@ -187,8 +251,8 @@ export class DocumentsService {
     const currentUserRole =
       currentUserId === document.createdById
         ? ('owner' as const)
-        : permissions.find((p) => p.userId === currentUserId)?.role ??
-          ('viewer' as const);
+        : (permissions.find((p) => p.userId === currentUserId)?.role ??
+          ('viewer' as const));
 
     return {
       ...rest,
